@@ -68,7 +68,7 @@ def _require(name: str) -> str:
 # ── Google Sheets — input queue ────────────────────────────────
 SPREADSHEET_ID    = _require("SPREADSHEET_ID")
 SHEET_NAME        = os.environ.get("SHEET_NAME", "Sheet1")
-LINK_COLUMN       = int(os.environ.get("LINK_COLUMN", "1"))
+LINK_COLUMN       = int(os.environ.get("LINK_COLUMN", "2"))
 
 # ── Google Sheets — output / blog queue ────────────────────────
 OUTPUT_SHEET_NAME = os.environ.get("OUTPUT_SHEET_NAME", "BlogQueue")
