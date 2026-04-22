@@ -83,11 +83,11 @@ SITE_URL = os.environ.get("SITE_URL", "https://affiliate-blog-bot")
 # ── Email — Gmail SMTP ─────────────────────────────────────────
 EMAIL_USER   = _require("EMAIL_USER")   # sender:   randompas11200@gmail.com
 EMAIL_PASS   = _require("EMAIL_PASS")   # Gmail App Password
-NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", EMAIL_USER)  # sabarnabarik2@gmail.com
+NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", EMAIL_USER)  # sabarnabarik@gmail.com
 
 # ── Scraper / run behaviour ────────────────────────────────────
 REQUEST_TIMEOUT = 20
-MAX_PRODUCTS    = int(os.environ.get("MAX_PRODUCTS", "3"))
+MAX_PRODUCTS    = int(os.environ.get("MAX_PRODUCTS", "1"))
 
 SCRAPE_HEADERS = {
     "User-Agent": (
