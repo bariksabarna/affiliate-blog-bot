@@ -1,22 +1,22 @@
-# Copyright © Sabarna Barik 
-# 
+# Copyright © Sabarna Barik
+#
 # This code is open-source for **educational and non-commercial purposes only**.
-# 
+#
 # You may:
 # - Read, study, and learn from this code.
 # - Modify or experiment with it for personal learning.
-# 
+#
 # You may NOT:
 # - Claim this code as your own.
 # - Use this code in commercial projects or for profit without written permission.
 # - Distribute this code as your own work.
-# 
+#
 # If you use or adapt this code, you **must give credit** to the original author: Sabarna Barik
 # For commercial use or special permissions, contact: sabarnabarik@gmail.com
-# 
+#
 # # Copyright © 2026 Sabarna Barik
 # # Non-commercial use only. Credit required if used.
-# 
+#
 # License:
 # This project is open-source for learning only.
 # Commercial use is prohibited.
@@ -32,7 +32,6 @@ import smtplib
 import traceback
 import requests
 
-from io import BytesIO
 from datetime import datetime
 from urllib.parse import urlparse
 from email.mime.text import MIMEText
@@ -41,7 +40,6 @@ from email.mime.multipart import MIMEMultipart
 import gspread
 from google.oauth2.service_account import Credentials
 from bs4 import BeautifulSoup
-from PIL import Image
 
 # ───────────────────────────────────────────────────────────────
 #  LOGGING  (stdout only — GitHub Actions captures it natively)
@@ -67,27 +65,27 @@ def _require(name: str) -> str:
     return val
 
 
-# Google Sheets
-SPREADSHEET_ID   = _require("SPREADSHEET_ID")
-SHEET_NAME       = os.environ.get("SHEET_NAME", "Sheet1")
-LINK_COLUMN      = int(os.environ.get("LINK_COLUMN", "1"))
+# ── Google Sheets — input queue ────────────────────────────────
+SPREADSHEET_ID    = _require("SPREADSHEET_ID")
+SHEET_NAME        = os.environ.get("SHEET_NAME", "Sheet1")
+LINK_COLUMN       = int(os.environ.get("LINK_COLUMN", "1"))
 
-# OpenRouter
+# ── Google Sheets — output / blog queue ────────────────────────
+OUTPUT_SHEET_NAME = os.environ.get("OUTPUT_SHEET_NAME", "BlogQueue")
+
+# ── OpenRouter ─────────────────────────────────────────────────
 OPENROUTER_API_KEY = _require("OPENROUTER_API_KEY")
 OPENROUTER_MODEL   = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-3-haiku")
 
-# WordPress
-WP_SITE_URL     = _require("WP_SITE_URL").rstrip("/")   # strip trailing slash
-WP_USERNAME     = _require("WP_USERNAME")
-WP_APP_PASSWORD = _require("WP_APP_PASSWORD")
-WP_CATEGORY_ID  = int(os.environ.get("WP_CATEGORY_ID", "1"))
+# ── Site identity (used as HTTP-Referer for OpenRouter) ────────
+SITE_URL = os.environ.get("SITE_URL", "https://affiliate-blog-bot")
 
-# Email
-EMAIL_USER      = _require("EMAIL_USER")
-EMAIL_PASSWORD  = _require("EMAIL_PASSWORD")
-NOTIFY_EMAIL    = os.environ.get("NOTIFY_EMAIL", EMAIL_USER)
+# ── Email — Gmail SMTP ─────────────────────────────────────────
+EMAIL_USER   = _require("EMAIL_USER")   # sender:   randompas11200@gmail.com
+EMAIL_PASS   = _require("EMAIL_PASS")   # Gmail App Password
+NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", EMAIL_USER)  # sabarnabarik2@gmail.com
 
-# Scraper
+# ── Scraper / run behaviour ────────────────────────────────────
 REQUEST_TIMEOUT = 20
 MAX_PRODUCTS    = int(os.environ.get("MAX_PRODUCTS", "3"))
 
@@ -125,22 +123,55 @@ def _decode_google_creds() -> dict:
         log.error(f"Failed to decode GOOGLE_CREDS_BASE64: {e}")
         sys.exit(1)
 
-# ───────────────────────────────────────────────────────────────
-#  STEP 1 — GOOGLE SHEETS
-# ───────────────────────────────────────────────────────────────
 
-def get_sheet():
-    """Authenticate with in-memory service account and return the worksheet."""
+def _make_gspread_client():
+    """Return one authenticated gspread client reused for both worksheets."""
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
     creds_dict = _decode_google_creds()
     creds      = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    client     = gspread.authorize(creds)
-    sheet      = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
-    log.info("Sheets: authenticated successfully.")
-    return sheet
+    return gspread.authorize(creds)
+
+# ───────────────────────────────────────────────────────────────
+#  STEP 1 — GOOGLE SHEETS  (input + output)
+# ───────────────────────────────────────────────────────────────
+
+def get_sheets() -> tuple:
+    """
+    Authenticate once; return (input_sheet, output_sheet).
+    Both worksheets live inside the same Spreadsheet (SPREADSHEET_ID).
+    The output worksheet is created automatically if it does not exist,
+    with a header row so the WP cron can identify columns by name.
+    """
+    client   = _make_gspread_client()
+    workbook = client.open_by_key(SPREADSHEET_ID)
+
+    # Input worksheet
+    input_sheet = workbook.worksheet(SHEET_NAME)
+    log.info(f"Sheets: input worksheet '{SHEET_NAME}' ready.")
+
+    # Output worksheet — create if missing
+    try:
+        output_sheet = workbook.worksheet(OUTPUT_SHEET_NAME)
+        log.info(f"Sheets: output worksheet '{OUTPUT_SHEET_NAME}' ready.")
+    except gspread.exceptions.WorksheetNotFound:
+        output_sheet = workbook.add_worksheet(
+            title=OUTPUT_SHEET_NAME, rows=1000, cols=13
+        )
+        output_sheet.append_row([
+            "timestamp", "status", "product_url", "product_title",
+            "blog_title", "html_content", "meta_description",
+            "focus_keyword", "tags", "image_url",
+            "wp_post_id", "wp_post_url", "published_at",
+        ])
+        log.info(
+            f"Sheets: output worksheet '{OUTPUT_SHEET_NAME}' "
+            "created with header row."
+        )
+
+    return input_sheet, output_sheet
 
 
 def read_first_row(sheet) -> dict | None:
@@ -153,7 +184,7 @@ def read_first_row(sheet) -> dict | None:
     data_rows = all_rows[1:]    # skip header
 
     if not data_rows:
-        log.info("Sheet is empty — nothing to process.")
+        log.info("Input sheet is empty — nothing to process.")
         return None
 
     first = data_rows[0]
@@ -169,7 +200,7 @@ def read_first_row(sheet) -> dict | None:
 
 def delete_row(sheet, row_number: int):
     sheet.delete_rows(row_number)
-    log.info(f"Sheets: row {row_number} deleted.")
+    log.info(f"Sheets: input row {row_number} deleted.")
 
 # ───────────────────────────────────────────────────────────────
 #  STEP 2 — SCRAPE PRODUCT PAGE
@@ -180,8 +211,8 @@ def _fetch_with_retry(url: str, retries: int = 3) -> BeautifulSoup:
     Fetch a URL with retry logic, timeout handling, and bot-evasion headers.
     Adds Referer header derived from the domain.
     """
-    domain  = urlparse(url).scheme + "://" + urlparse(url).netloc
-    headers = {**SCRAPE_HEADERS, "Referer": domain}
+    domain   = urlparse(url).scheme + "://" + urlparse(url).netloc
+    headers  = {**SCRAPE_HEADERS, "Referer": domain}
     last_exc = None
 
     for attempt in range(1, retries + 1):
@@ -357,17 +388,12 @@ TAGS: [tag1, tag2, tag3, tag4, tag5]
         headers={
             "Authorization":  f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type":   "application/json",
-            "HTTP-Referer":   WP_SITE_URL,
+            "HTTP-Referer":   SITE_URL,
             "X-Title":        "Affiliate Blog Bot",
         },
         json={
             "model": OPENROUTER_MODEL,
-            "messages": [
-                {
-                    "role":    "user",
-                    "content": prompt,
-                }
-            ],
+            "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7,
             "max_tokens":  4096,
         },
@@ -401,167 +427,71 @@ TAGS: [tag1, tag2, tag3, tag4, tag5]
     return blog
 
 # ───────────────────────────────────────────────────────────────
-#  STEP 4 — UPLOAD IMAGE TO WORDPRESS
+#  STEP 4 — APPEND BLOG ROW TO OUTPUT SHEET
 # ───────────────────────────────────────────────────────────────
 
-def upload_image(image_url: str, alt_text: str):
+def append_to_sheet(output_sheet, product: dict, blog: dict):
     """
-    Download image → compress with Pillow → upload to WP media library.
-    Returns WordPress media ID, or None on any failure (non-fatal).
+    Write one content row to the output/queue sheet.
+
+    Exact column schema (A–M):
+      A  timestamp         — ISO datetime of this run
+      B  status            — "PENDING"  (WP cron updates to "PUBLISHED")
+      C  product_url       — original affiliate URL
+      D  product_title     — scraped product name
+      E  blog_title        — AI-generated SEO title
+      F  html_content      — full inner-body HTML blog post
+      G  meta_description  — 150–160 char meta description
+      H  focus_keyword     — primary SEO keyword
+      I  tags              — comma-separated tag names
+      J  image_url         — scraped product image URL (WP cron downloads it)
+      K  wp_post_id        — empty; WP cron fills after publishing
+      L  wp_post_url       — empty; WP cron fills after publishing
+      M  published_at      — empty; WP cron fills after publishing
     """
-    if not image_url:
-        log.info("Image: no URL provided — skipping.")
-        return None
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    tags_str  = ", ".join(blog["tags"])
 
-    try:
-        raw = requests.get(
-            image_url,
-            headers=SCRAPE_HEADERS,
-            timeout=REQUEST_TIMEOUT,
-        )
-        raw.raise_for_status()
+    row = [
+        timestamp,            # A
+        "PENDING",            # B
+        product["url"],       # C
+        product["title"],     # D
+        blog["blog_title"],   # E
+        blog["html_content"], # F
+        blog["meta_desc"],    # G
+        blog["focus_keyword"],# H
+        tags_str,             # I
+        product["image"],     # J
+        "",                   # K — wp_post_id   (WP cron fills)
+        "",                   # L — wp_post_url  (WP cron fills)
+        "",                   # M — published_at (WP cron fills)
+    ]
 
-        # Compress: max 1200px wide, JPEG quality 82
-        img = Image.open(BytesIO(raw.content)).convert("RGB")
-        if img.width > 1200:
-            ratio = 1200 / img.width
-            img   = img.resize((1200, int(img.height * ratio)), Image.LANCZOS)
-        buf = BytesIO()
-        img.save(buf, format="JPEG", quality=82, optimize=True)
-        img_bytes = buf.getvalue()
-        log.info(f"Image: {len(raw.content)//1024}KB → {len(img_bytes)//1024}KB compressed")
-
-        filename = f"product-{int(time.time())}.jpg"
-        upload   = requests.post(
-            f"{WP_SITE_URL}/wp-json/wp/v2/media",
-            auth=(WP_USERNAME, WP_APP_PASSWORD),
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Content-Type":        "image/jpeg",
-            },
-            data=img_bytes,
-            timeout=60,
-        )
-        upload.raise_for_status()
-        media_id = upload.json()["id"]
-
-        # Set alt text (best-effort)
-        requests.post(
-            f"{WP_SITE_URL}/wp-json/wp/v2/media/{media_id}",
-            auth=(WP_USERNAME, WP_APP_PASSWORD),
-            json={"alt_text": alt_text[:125]},
-            timeout=20,
-        )
-        log.info(f"Image: uploaded — media ID {media_id}")
-        return media_id
-
-    except Exception as e:
-        log.warning(f"Image upload failed (non-fatal, post will continue): {e}")
-        return None
+    output_sheet.append_row(row, value_input_option="RAW")
+    log.info(
+        f"Sheets: appended to '{OUTPUT_SHEET_NAME}' — "
+        f"'{blog['blog_title'][:55]}' | status=PENDING"
+    )
 
 # ───────────────────────────────────────────────────────────────
-#  STEP 5 — PUBLISH TO WORDPRESS
-# ───────────────────────────────────────────────────────────────
-
-def _get_or_create_tags(names: list) -> list:
-    """Look up tag IDs by name; create tags that don't yet exist."""
-    ids = []
-    for name in names:
-        name = name.strip()
-        if not name:
-            continue
-        try:
-            r = requests.get(
-                f"{WP_SITE_URL}/wp-json/wp/v2/tags",
-                auth=(WP_USERNAME, WP_APP_PASSWORD),
-                params={"search": name, "per_page": 5},
-                timeout=20,
-            )
-            match = next(
-                (t for t in (r.json() if r.ok else []) if t["name"].lower() == name.lower()),
-                None,
-            )
-            if match:
-                ids.append(match["id"])
-            else:
-                cr = requests.post(
-                    f"{WP_SITE_URL}/wp-json/wp/v2/tags",
-                    auth=(WP_USERNAME, WP_APP_PASSWORD),
-                    json={"name": name},
-                    timeout=20,
-                )
-                if cr.ok:
-                    ids.append(cr.json()["id"])
-                else:
-                    log.warning(f"Could not create tag '{name}': {cr.status_code}")
-        except Exception as e:
-            log.warning(f"Tag handling error for '{name}': {e}")
-    return ids
-
-
-def publish_to_wordpress(blog: dict, media_id, retries: int = 2) -> dict:
-    """Publish post with retry logic. Returns WP post response dict."""
-    log.info("WordPress: publishing post…")
-    tag_ids = _get_or_create_tags(blog["tags"])
-
-    payload = {
-        "title":          blog["blog_title"],
-        "content":        blog["html_content"],
-        "excerpt":        blog["meta_desc"],
-        "status":         "publish",
-        "categories":     [WP_CATEGORY_ID],
-        "tags":           tag_ids,
-        "comment_status": "open",
-        "meta": {
-            "_yoast_wpseo_metadesc":   blog["meta_desc"],
-            "_yoast_wpseo_focuskw":    blog["focus_keyword"],
-            "rank_math_description":   blog["meta_desc"],
-            "rank_math_focus_keyword": blog["focus_keyword"],
-        },
-    }
-    if media_id:
-        payload["featured_media"] = media_id
-
-    last_exc = None
-    for attempt in range(1, retries + 1):
-        try:
-            log.info(f"WP publish attempt {attempt}/{retries}…")
-            resp = requests.post(
-                f"{WP_SITE_URL}/wp-json/wp/v2/posts",
-                auth=(WP_USERNAME, WP_APP_PASSWORD),
-                json=payload,
-                timeout=60,
-            )
-            resp.raise_for_status()
-            post = resp.json()
-            log.info(f"WordPress: published → ID {post['id']} | {post.get('link', '')}")
-            return post
-        except Exception as e:
-            log.warning(f"WP publish attempt {attempt} failed: {e}")
-            last_exc = e
-            if attempt < retries:
-                time.sleep(5)
-
-    raise RuntimeError("WordPress publish failed after all retries.") from last_exc
-
-# ───────────────────────────────────────────────────────────────
-#  STEP 6 — EMAIL VIA GMAIL SMTP
+#  STEP 5 — EMAIL VIA GMAIL SMTP
 # ───────────────────────────────────────────────────────────────
 
 def _send_smtp(subject: str, html_body: str):
     """Send HTML email via Gmail SMTP (port 587, STARTTLS). Non-fatal."""
     try:
-        msg              = MIMEMultipart("alternative")
-        msg["Subject"]   = subject
-        msg["From"]      = EMAIL_USER
-        msg["To"]        = NOTIFY_EMAIL
+        msg            = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = EMAIL_USER
+        msg["To"]      = NOTIFY_EMAIL
         msg.attach(MIMEText(html_body, "html", "utf-8"))
 
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()
-            server.login(EMAIL_USER, EMAIL_PASSWORD)
+            server.login(EMAIL_USER, EMAIL_PASS)
             server.sendmail(EMAIL_USER, NOTIFY_EMAIL, msg.as_string())
 
         log.info(f"Email sent: {subject}")
@@ -569,22 +499,44 @@ def _send_smtp(subject: str, html_body: str):
         log.error(f"Email failed (non-fatal): {e}")
 
 
-def email_success(title: str, post_url: str):
+def email_queued(blog_title: str, product_url: str):
+    """Notify that blog content has been written to the output sheet."""
     _send_smtp(
-        f"✅ Blog Published: {title[:50]}",
+        f"📝 Blog Queued (PENDING): {blog_title[:50]}",
         f"""<html><body style="font-family:Arial,sans-serif;max-width:600px;margin:auto">
-        <h2 style="color:#2e7d32;border-bottom:2px solid #2e7d32;padding-bottom:8px">
-          🎉 Post Published Successfully
+        <h2 style="color:#1565c0;border-bottom:2px solid #1565c0;padding-bottom:8px">
+          📋 Blog Content Queued for Publishing
         </h2>
-        <table style="width:100%;border-collapse:collapse">
-          <tr><td style="padding:8px;color:#555"><b>Product:</b></td>
-              <td style="padding:8px">{title}</td></tr>
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+          <tr>
+            <td style="padding:10px 8px;color:#555;width:140px"><b>Blog Title:</b></td>
+            <td style="padding:10px 8px">{blog_title}</td>
+          </tr>
           <tr style="background:#f5f5f5">
-              <td style="padding:8px;color:#555"><b>Post URL:</b></td>
-              <td style="padding:8px"><a href="{post_url}" style="color:#1565c0">{post_url}</a></td></tr>
-          <tr><td style="padding:8px;color:#555"><b>Time:</b></td>
-              <td style="padding:8px">{datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}</td></tr>
+            <td style="padding:10px 8px;color:#555"><b>Product URL:</b></td>
+            <td style="padding:10px 8px">
+              <a href="{product_url}" style="color:#1565c0;word-break:break-all">{product_url}</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:10px 8px;color:#555"><b>Status:</b></td>
+            <td style="padding:10px 8px">
+              <span style="background:#fff3e0;color:#e65100;padding:3px 10px;
+                           border-radius:12px;font-weight:bold">PENDING</span>
+            </td>
+          </tr>
+          <tr style="background:#f5f5f5">
+            <td style="padding:10px 8px;color:#555"><b>Queued at:</b></td>
+            <td style="padding:10px 8px">{datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 8px;color:#555"><b>Output Sheet:</b></td>
+            <td style="padding:10px 8px">{OUTPUT_SHEET_NAME}</td>
+          </tr>
         </table>
+        <p style="color:#888;font-size:12px;margin-top:16px">
+          WordPress cron will pick this up and update the status to PUBLISHED.
+        </p>
         </body></html>""",
     )
 
@@ -601,7 +553,7 @@ def email_error(context: str, error: str):
                     font-size:12px;overflow:auto;white-space:pre-wrap">{error}</pre>
         <p style="color:#555">
           Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}<br>
-          The row has <b>NOT</b> been deleted from Google Sheets.
+          The row has <b>NOT</b> been deleted from the input sheet.
         </p>
         </body></html>""",
     )
@@ -609,13 +561,14 @@ def email_error(context: str, error: str):
 
 def email_empty_sheet():
     _send_smtp(
-        "⚠️ Blog Bot — Sheet Empty",
+        "⚠️ Blog Bot — Input Sheet Empty",
         f"""<html><body style="font-family:Arial,sans-serif;max-width:600px;margin:auto">
         <h2 style="color:#e65100;border-bottom:2px solid #e65100;padding-bottom:8px">
           📋 No Products to Process
         </h2>
         <p>The bot ran at <b>{datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}</b>
-           but found no product URLs in the Google Sheet.</p>
+           but found no product URLs in the input sheet
+           (<b>{SHEET_NAME}</b>).</p>
         <p>Please add new affiliate links in column A (starting from row 2) to continue.</p>
         </body></html>""",
     )
@@ -624,14 +577,18 @@ def email_empty_sheet():
 #  MAIN PIPELINE
 # ───────────────────────────────────────────────────────────────
 
-def process_one(sheet) -> bool:
+def process_one(input_sheet, output_sheet) -> bool | None:
     """
-    Process a single product from row 2.
-    Returns True on success, False on failure (row is NOT deleted on failure).
+    Process a single product from row 2 of the input sheet.
+
+    Returns:
+      True  — content appended to output sheet, input row deleted
+      False — a step failed; input row NOT deleted
+      None  — input sheet is empty (sentinel)
     """
-    row_data = read_first_row(sheet)
+    row_data = read_first_row(input_sheet)
     if row_data is None:
-        return None     # sentinel: sheet is empty
+        return None     # sentinel: input sheet is empty
 
     row_number  = row_data["row_number"]
     product_url = row_data["url"]
@@ -654,41 +611,40 @@ def process_one(sheet) -> bool:
         err = traceback.format_exc()
         log.error(f"Blog generation failed:\n{err}")
         email_error("OpenRouter Blog Generation", err)
-        return False
+        return False    # row NOT deleted
 
     time.sleep(1)
 
-    # ── 4. Upload image (non-fatal) ────────────────────────────
-    media_id = upload_image(product["image"], alt_text=product["title"])
-
-    # ── 5. Publish to WordPress ────────────────────────────────
+    # ── 4. Append to output sheet ──────────────────────────────
     try:
-        wp_post = publish_to_wordpress(blog, media_id)
+        append_to_sheet(output_sheet, product, blog)
     except Exception:
         err = traceback.format_exc()
-        log.error(f"WordPress publish failed:\n{err}")
-        email_error("WordPress Publishing", err)
-        return False
+        log.error(f"Sheets append failed:\n{err}")
+        email_error("Google Sheets Append", err)
+        return False    # row NOT deleted — content was not saved
 
-    # ── 6. Delete row — ONLY after confirmed publish ───────────
+    # ── 5. Delete input row — ONLY after confirmed append ──────
     try:
-        delete_row(sheet, row_number)
+        delete_row(input_sheet, row_number)
     except Exception as e:
-        log.warning(f"Row deletion failed (post is already live): {e}")
+        log.warning(f"Input row deletion failed (content already saved to output): {e}")
 
-    # ── 7. Notify success ──────────────────────────────────────
-    email_success(product["title"], wp_post.get("link", WP_SITE_URL))
+    # ── 6. Notify ──────────────────────────────────────────────
+    email_queued(blog["blog_title"], product["url"])
     return True
 
 
 def main():
     separator = "━" * 60
     log.info(separator)
-    log.info("  Affiliate Blog Bot — starting run")
-    log.info(f"  Max products this run: {MAX_PRODUCTS}")
+    log.info("  Affiliate Blog Bot — starting run  [Sheets-Queue mode]")
+    log.info(f"  Input sheet  : {SHEET_NAME}")
+    log.info(f"  Output sheet : {OUTPUT_SHEET_NAME}")
+    log.info(f"  Max products : {MAX_PRODUCTS}")
     log.info(separator)
 
-    sheet     = get_sheet()
+    input_sheet, output_sheet = get_sheets()
     processed = 0
     errors    = 0
 
@@ -697,13 +653,12 @@ def main():
         log.info(f"  Product {i + 1} of {MAX_PRODUCTS}")
         log.info(f"{'─' * 40}")
 
-        result = process_one(sheet)
+        result = process_one(input_sheet, output_sheet)
 
         if result is None:
-            # Sheet is empty
             if processed == 0:
                 email_empty_sheet()
-            log.info("No more products in sheet — stopping early.")
+            log.info("No more products in input sheet — stopping early.")
             break
 
         if result:
@@ -711,16 +666,16 @@ def main():
         else:
             errors += 1
 
-        # Delay between products (except after the last one)
+        # Delay between products to avoid rate limiting
         if i < MAX_PRODUCTS - 1:
-            time.sleep(2)
+            time.sleep(3)
 
     log.info(separator)
-    log.info(f"  Run complete — {processed} published, {errors} failed")
+    log.info(f"  Run complete — {processed} queued (PENDING), {errors} failed")
     log.info(separator)
 
     if errors > 0:
-        sys.exit(1)     # non-zero exit makes the GitHub Actions step red
+        sys.exit(1)     # non-zero exit flags the GitHub Actions step red
 
 
 if __name__ == "__main__":
