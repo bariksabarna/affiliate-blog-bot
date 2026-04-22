@@ -15,7 +15,7 @@ on:
       max_products:
         description: "Max products to process this run (1–5)"
         required: false
-        default: "3"
+        default: "1"
         type: string
 
 jobs:
