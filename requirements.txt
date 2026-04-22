@@ -1,0 +1,14 @@
+# Affiliate Blog Bot — Python dependencies
+# Install: pip install -r requirements.txt
+
+# Google Sheets
+gspread==6.1.2
+google-auth==2.29.0
+
+# HTML scraping
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.2.2
+
+# Image processing
+Pillow==10.3.0
