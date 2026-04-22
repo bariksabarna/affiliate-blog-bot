@@ -1,32 +1,13 @@
-# Copyright © Sabarna Barik 
-# 
-# This code is open-source for **educational and non-commercial purposes only**.
-# 
-# You may:
-# - Read, study, and learn from this code.
-# - Modify or experiment with it for personal learning.
-# 
-# You may NOT:
-# - Claim this code as your own.
-# - Use this code in commercial projects or for profit without written permission.
-# - Distribute this code as your own work.
-# 
-# If you use or adapt this code, you **must give credit** to the original author: Sabarna Barik
-# For commercial use or special permissions, contact: sabarnabarik@gmail.com
-# 
-# # Copyright © 2026 Sabarna Barik
-# # Non-commercial use only. Credit required if used.
-# 
-# License:
-# This project is open-source for learning only.
-# Commercial use is prohibited.
-# Credit is required if you use any part of this code.
+# Copyright © Sabarna Barik
+# Non-commercial use only. Credit required if used.
+# Contact: sabarnabarik@gmail.com
+
 name: Affiliate Blog Bot
 
 on:
   # ── Scheduled run every 8 hours ──────────────────────────────
   schedule:
-    - cron: "0 */8 * * *"   # 00:00, 08:00, 16:00 UTC
+    - cron: "0 */8 * * *"    # 00:00, 08:00, 16:00 UTC
 
   # ── Manual trigger from the Actions tab ──────────────────────
   workflow_dispatch:
@@ -64,38 +45,25 @@ jobs:
       # ── 4. Run the bot ────────────────────────────────────────
       - name: Run Affiliate Blog Bot
         env:
-          # Google Sheets
+          # ── Google Sheets ──────────────────────────────────────
           GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
           SPREADSHEET_ID:      ${{ secrets.SPREADSHEET_ID }}
-          SHEET_NAME:          "Sheet1"
-          LINK_COLUMN:         "2"
+          SHEET_NAME:          "Sheet1"          # input worksheet
+          OUTPUT_SHEET_NAME:   "BlogQueue"       # output/queue worksheet
 
-          # OpenRouter
+          # ── OpenRouter ─────────────────────────────────────────
           OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_MODEL:    "anthropic/claude-3-haiku"
 
-          # WordPress
-          WP_SITE_URL:         ${{ secrets.WP_SITE_URL }}
-          WP_USERNAME:         ${{ secrets.WP_USERNAME }}
-          WP_APP_PASSWORD:     ${{ secrets.WP_APP_PASSWORD }}
-          WP_CATEGORY_ID:      "1"
+          # ── Site identity ──────────────────────────────────────
+          SITE_URL:            "https://affiliate-blog-bot"
 
-          # Email
+          # ── Email (Gmail SMTP) ─────────────────────────────────
           EMAIL_USER:          ${{ secrets.EMAIL_USER }}
-          EMAIL_PASSWORD:      ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_PASS:          ${{ secrets.EMAIL_PASS }}
           NOTIFY_EMAIL:        ${{ secrets.NOTIFY_EMAIL }}
 
-          # Behavior
-          MAX_PRODUCTS: ${{ github.event.inputs.max_products || '3' }}
+          # ── Behaviour ──────────────────────────────────────────
+          MAX_PRODUCTS:        ${{ github.event.inputs.max_products || '3' }}
 
         run: python bot.py
-
-      # ── 5. Upload log as artifact (even on failure) ───────────
-      - name: Upload run log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bot-log-${{ github.run_number }}
-          path: "*.log"
-          if-no-files-found: ignore
-          retention-days: 7
