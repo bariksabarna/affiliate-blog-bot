@@ -68,7 +68,7 @@ jobs:
           GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
           SPREADSHEET_ID:      ${{ secrets.SPREADSHEET_ID }}
           SHEET_NAME:          "Sheet1"
-          LINK_COLUMN:         "1"
+          LINK_COLUMN:         "2"
 
           # OpenRouter
           OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
