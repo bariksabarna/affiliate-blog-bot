@@ -1,3 +1,4 @@
+# Copyright © Sabarna Barik — Non-commercial use only. Credit required if used.
 # Affiliate Blog Bot — Python dependencies
 # Install: pip install -r requirements.txt
 
@@ -9,6 +10,3 @@ google-auth==2.29.0
 requests==2.32.3
 beautifulsoup4==4.12.3
 lxml==5.2.2
-
-# Image processing
-Pillow==10.3.0
