@@ -13,9 +13,7 @@
 #
 # If you use or adapt this code, you **must give credit** to the original author: Sabarna Barik
 # For commercial use or special permissions, contact: sabarnabarik@gmail.com
-#
-# # Copyright © 2026 Sabarna Barik
-# # Non-commercial use only. Credit required if used.
+
 
 import os
 import sys
@@ -59,8 +57,8 @@ def _require(name: str) -> str:
 
 
 SPREADSHEET_ID = _require("SPREADSHEET_ID")
-INPUT_SHEET_NAME = os.environ.get("INPUT_SHEET_NAME", "Sheet1").strip()
-OUTPUT_SHEET_NAME = os.environ.get("OUTPUT_SHEET_NAME", "Posts").strip()
+INPUT_SHEET_NAME = "Sheet1"
+OUTPUT_SHEET_NAME = "Posts"
 OPENROUTER_API_KEY = _require("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "anthropic/claude-3-haiku").strip()
 SITE_URL = os.environ.get("SITE_URL", "https://affiliate-blog-bot").strip()
@@ -159,7 +157,7 @@ def is_valid_url(url: str) -> bool:
 
 
 # ───────────────────────────────────────────────────────────────
-# READ ROW 2 ONLY
+# READ ONLY ROW 2
 # ───────────────────────────────────────────────────────────────
 
 def read_row_2(sheet) -> dict | None:
@@ -169,8 +167,7 @@ def read_row_2(sheet) -> dict | None:
     Column B = product URL
     Column C = affiliate URL
     """
-    row_number = 2
-    values = sheet.row_values(row_number)
+    values = sheet.row_values(2)
 
     if not values:
         log.info("Row 2 is empty.")
@@ -187,7 +184,7 @@ def read_row_2(sheet) -> dict | None:
         affiliate_url = product_url
 
     return {
-        "row_number": row_number,
+        "row_number": 2,
         "product_url": product_url,
         "affiliate_url": affiliate_url,
     }
@@ -300,6 +297,7 @@ def scrape_product(url: str) -> dict:
         "price": (price or "Check website for price").strip(),
         "image": (image or "").strip(),
     }
+
     log.info(f"Scraped: {product['title']} | {product['price']}")
     return product
 
@@ -481,7 +479,6 @@ def main():
             return
 
         delete_row_2(input_sheet)
-
         log.info("Run complete: 1 blog created and row 2 deleted.")
 
     except Exception:
