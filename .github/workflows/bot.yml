@@ -1,69 +1,48 @@
 # Copyright © Sabarna Barik
 # Non-commercial use only. Credit required if used.
 # Contact: sabarnabarik@gmail.com
-
 name: Affiliate Blog Bot
 
 on:
-  # ── Scheduled run every 8 hours ──────────────────────────────
   schedule:
-  - cron: "0 8 * * *"
-
-  # ── Manual trigger from the Actions tab ──────────────────────
+    - cron: "0 */8 * * *"   # every 8 hours
   workflow_dispatch:
-    inputs:
-      max_products:
-        description: "Max products to process this run (1–5)"
-        required: false
-        default: "1"
-        type: string
 
 jobs:
   run-bot:
     name: Run Blog Bot
     runs-on: ubuntu-latest
-    timeout-minutes: 30       # kill hung runs after 30 min
+    timeout-minutes: 30
 
     steps:
-      # ── 1. Checkout ───────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Set up Python ─────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
+          cache: pip
 
-      # ── 3. Install dependencies ───────────────────────────────
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ── 4. Run the bot ────────────────────────────────────────
       - name: Run Affiliate Blog Bot
         env:
-          # ── Google Sheets ──────────────────────────────────────
           GOOGLE_CREDS_BASE64: ${{ secrets.GOOGLE_CREDS_BASE64 }}
-          SPREADSHEET_ID:      ${{ secrets.SPREADSHEET_ID }}
-          SHEET_NAME:          "Sheet1"          # input worksheet
-          OUTPUT_SHEET_NAME:   "BlogQueue"       # output/queue worksheet
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
 
-          # ── OpenRouter ─────────────────────────────────────────
-          OPENROUTER_API_KEY:  ${{ secrets.OPENROUTER_API_KEY }}
-          OPENROUTER_MODEL:    "anthropic/claude-3-haiku"
+          # Leave blank to auto-detect input sheet.
+          # If you know the exact input sheet, set it here.
+          INPUT_SHEET_NAME: ""
 
-          # ── Site identity ──────────────────────────────────────
-          SITE_URL:            "https://affiliate-blog-bot"
+          # Your existing posts sheet
+          OUTPUT_SHEET_NAME: "Posts"
 
-          # ── Email (Gmail SMTP) ─────────────────────────────────
-          EMAIL_USER:          ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS:          ${{ secrets.EMAIL_PASS }}
-          NOTIFY_EMAIL:        ${{ secrets.NOTIFY_EMAIL }}
-
-          # ── Behaviour ──────────────────────────────────────────
-          MAX_PRODUCTS:        ${{ github.event.inputs.max_products || '3' }}
-
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_MODEL: "anthropic/claude-3-haiku"
+          SITE_URL: "https://affiliate-blog-bot"
+          MAX_PRODUCTS: "1"
         run: python bot.py
